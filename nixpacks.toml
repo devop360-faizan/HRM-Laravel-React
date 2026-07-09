@@ -1,18 +1,12 @@
 [providers]
-  - node
   - php
 
 [phases.setup]
   nixPkgs = ["...", "nodejs_20"]
 
-[phases.install]
-  cmds = [
-    "npm install --no-audit --no-fund",
-    "composer install --no-interaction --prefer-dist --optimize-autoloader"
-  ]
-
 [phases.build]
   cmds = [
+    "npm install --no-audit --no-fund",
     "npm run build",
     "php artisan config:cache",
     "php artisan route:cache",
