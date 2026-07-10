@@ -3,41 +3,49 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
+use App\Http\Requests\StoreDesignationRequest;
+use App\Http\Resources\DesignationResource;
 use App\Models\Designation;
+use App\Services\DesignationService;
+use App\Traits\ApiResponse;
+use Illuminate\Http\JsonResponse;
 
 class DesignationController extends Controller
 {
-    public function index()
+    use ApiResponse;
+
+    public function __construct(
+        private readonly DesignationService $designationService
+    ) {}
+
+    public function index(): JsonResponse
     {
-        return response()->json(Designation::with('department')->get());
+        return $this->respondSuccess(
+            DesignationResource::collection($this->designationService->all())
+        );
     }
 
-    public function store(Request $request)
+    public function store(StoreDesignationRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'department_id' => 'required|exists:departments,id'
-        ]);
-
-        $designation = Designation::create($validated);
-        return response()->json(['message' => 'Designation created', 'designation' => $designation->load('department')]);
+        $designation = $this->designationService->create($request->validated());
+        return $this->respondCreated(
+            new DesignationResource($designation),
+            'Designation created'
+        );
     }
 
-    public function update(Request $request, Designation $designation)
+    public function update(StoreDesignationRequest $request, Designation $designation): JsonResponse
     {
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'department_id' => 'required|exists:departments,id'
-        ]);
-
-        $designation->update($validated);
-        return response()->json(['message' => 'Designation updated', 'designation' => $designation->load('department')]);
+        $designation = $this->designationService->update($request->validated(), $designation);
+        return $this->respondUpdated(
+            new DesignationResource($designation),
+            'Designation updated'
+        );
     }
 
-    public function destroy(Designation $designation)
+    public function destroy(Designation $designation): JsonResponse
     {
-        $designation->delete();
-        return response()->json(['message' => 'Designation deleted']);
+        $this->designationService->delete($designation);
+        return $this->respondDeleted('Designation deleted');
     }
 }
