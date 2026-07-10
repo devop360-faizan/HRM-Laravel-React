@@ -3,43 +3,49 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
+use App\Http\Requests\StoreHolidayRequest;
+use App\Http\Resources\HolidayResource;
 use App\Models\Holiday;
+use App\Services\HolidayService;
+use App\Traits\ApiResponse;
+use Illuminate\Http\JsonResponse;
 
 class HolidayController extends Controller
 {
-    public function index()
+    use ApiResponse;
+
+    public function __construct(
+        private readonly HolidayService $holidayService
+    ) {}
+
+    public function index(): JsonResponse
     {
-        return response()->json(Holiday::orderBy('date')->get());
+        return $this->respondSuccess(
+            HolidayResource::collection($this->holidayService->all())
+        );
     }
 
-    public function store(Request $request)
+    public function store(StoreHolidayRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'name' => 'required|string',
-            'date' => 'required|date',
-            'description' => 'nullable|string'
-        ]);
-
-        $holiday = Holiday::create($validated);
-        return response()->json(['message' => 'Holiday created', 'holiday' => $holiday]);
+        $holiday = $this->holidayService->create($request->validated());
+        return $this->respondCreated(
+            new HolidayResource($holiday),
+            'Holiday created'
+        );
     }
 
-    public function update(Request $request, Holiday $holiday)
+    public function update(StoreHolidayRequest $request, Holiday $holiday): JsonResponse
     {
-        $validated = $request->validate([
-            'name' => 'required|string',
-            'date' => 'required|date',
-            'description' => 'nullable|string'
-        ]);
-
-        $holiday->update($validated);
-        return response()->json(['message' => 'Holiday updated', 'holiday' => $holiday]);
+        $holiday = $this->holidayService->update($request->validated(), $holiday);
+        return $this->respondUpdated(
+            new HolidayResource($holiday),
+            'Holiday updated'
+        );
     }
 
-    public function destroy(Holiday $holiday)
+    public function destroy(Holiday $holiday): JsonResponse
     {
-        $holiday->delete();
-        return response()->json(['message' => 'Holiday deleted']);
+        $this->holidayService->delete($holiday);
+        return $this->respondDeleted('Holiday deleted');
     }
 }

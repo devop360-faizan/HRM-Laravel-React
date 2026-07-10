@@ -3,49 +3,52 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
+use App\Http\Requests\ApplyLeaveRequest;
+use App\Http\Requests\UpdateLeaveStatusRequest;
+use App\Http\Resources\LeaveResource;
 use App\Models\Leave;
+use App\Services\LeaveService;
+use App\Traits\ApiResponse;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
 class LeaveController extends Controller
 {
-    public function index()
+    use ApiResponse;
+
+    public function __construct(
+        private readonly LeaveService $leaveService
+    ) {}
+
+    public function index(): JsonResponse
     {
-        $leaves = Leave::with(['user:id,name,email', 'leaveType'])->orderBy('created_at', 'desc')->get();
-        return response()->json($leaves);
+        return $this->respondSuccess(
+            LeaveResource::collection($this->leaveService->all())
+        );
     }
 
-    public function myLeaves(Request $request)
+    public function myLeaves(Request $request): JsonResponse
     {
-        $leaves = $request->user()->leaves()->with('leaveType')->orderBy('created_at', 'desc')->get();
-        return response()->json($leaves);
+        return $this->respondSuccess(
+            LeaveResource::collection($this->leaveService->myLeaves($request))
+        );
     }
 
-    public function store(Request $request)
+    public function store(ApplyLeaveRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'start_date' => 'required|date',
-            'end_date' => 'required|date|after_or_equal:start_date',
-            'reason' => 'nullable|string'
-        ]);
-
-        $defaultLeaveType = \App\Models\LeaveType::first();
-        if ($defaultLeaveType) {
-            $validated['leave_type_id'] = $defaultLeaveType->id;
-        }
-
-        $leave = $request->user()->leaves()->create($validated);
-
-        return response()->json(['message' => 'Leave applied successfully', 'leave' => $leave]);
+        $leave = $this->leaveService->store($request, $request->validated());
+        return $this->respondCreated(
+            new LeaveResource($leave),
+            'Leave applied successfully'
+        );
     }
 
-    public function updateStatus(Request $request, Leave $leave)
+    public function updateStatus(UpdateLeaveStatusRequest $request, Leave $leave): JsonResponse
     {
-        $request->validate([
-            'status' => 'required|in:approved,rejected'
-        ]);
-
-        $leave->update(['status' => $request->status]);
-
-        return response()->json(['message' => 'Leave status updated', 'leave' => $leave]);
+        $leave = $this->leaveService->updateStatus($leave, $request->validated()['status']);
+        return $this->respondUpdated(
+            new LeaveResource($leave),
+            'Leave status updated'
+        );
     }
 }
