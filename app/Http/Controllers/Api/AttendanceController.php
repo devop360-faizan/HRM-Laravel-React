@@ -3,182 +3,74 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\ImportAttendanceRequest;
+use App\Http\Requests\ManualAttendanceRequest;
+use App\Http\Resources\AttendanceResource;
+use App\Services\AttendanceService;
+use App\Traits\ApiResponse;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use App\Models\Attendance;
-use App\Models\User;
-use App\Imports\AttendanceImport;
-use Maatwebsite\Excel\Facades\Excel;
-use Carbon\Carbon;
 
 class AttendanceController extends Controller
 {
-    public function import(Request $request)
+    use ApiResponse;
+
+    public function __construct(
+        private readonly AttendanceService $attendanceService
+    ) {}
+
+    public function import(ImportAttendanceRequest $request): JsonResponse
     {
-        $request->validate([
-            'file' => 'required|mimes:xlsx,xls,csv'
-        ]);
-
-        Excel::import(new AttendanceImport, $request->file('file'));
-
-        return response()->json(['message' => 'Attendance imported successfully']);
+        $this->attendanceService->import($request);
+        return $this->respondSuccess(null, 'Attendance imported successfully');
     }
 
-    public function index(Request $request)
+    public function index(Request $request): JsonResponse
     {
-        $query = Attendance::with('user:id,name,email');
-
-        if ($request->has('month') && $request->has('year')) {
-            $query->whereMonth('date', $request->month)
-                  ->whereYear('date', $request->year);
-        }
-        
-        if ($request->has('user_id') && $request->user_id != '') {
-            $query->where('user_id', $request->user_id);
-        }
-
-        $attendances = $query->orderBy('date', 'desc')->get();
-        return response()->json($attendances);
-    }
-
-    public function myAttendances(Request $request)
-    {
-        $query = $request->user()->attendances();
-
-        if ($request->has('month') && $request->has('year')) {
-            $query->whereMonth('date', $request->month)
-                  ->whereYear('date', $request->year);
-        }
-
-        $attendances = $query->orderBy('date', 'desc')->get();
-        return response()->json($attendances);
-    }
-
-    public function markManualAttendance(Request $request)
-    {
-        $validated = $request->validate([
-            'user_id' => 'required|exists:users,id',
-            'date' => 'required|date',
-            'status' => 'required|in:present,absent,late,half_day',
-            'check_in' => 'nullable|date_format:H:i',
-            'check_out' => 'nullable|date_format:H:i'
-        ]);
-
-        $status = $validated['status'];
-
-        // 12:15 Grace Time Logic
-        if (!empty($validated['check_in'])) {
-            $checkInTime = Carbon::createFromFormat('H:i', $validated['check_in']);
-            $threshold = Carbon::createFromFormat('H:i', '12:15');
-            
-            if ($checkInTime->greaterThan($threshold) && $status === 'present') {
-                $status = 'late';
-            }
-        }
-
-        $attendance = Attendance::updateOrCreate(
-            ['user_id' => $validated['user_id'], 'date' => $validated['date']],
-            [
-                'status' => $status,
-                'check_in' => $validated['check_in'] ?? null,
-                'check_out' => $validated['check_out'] ?? null,
-            ]
+        return $this->respondSuccess(
+            AttendanceResource::collection($this->attendanceService->index($request))
         );
-
-        // Deduct leave if 3 lates in the month
-        if ($status === 'late') {
-            $month = Carbon::parse($validated['date'])->month;
-            $year = Carbon::parse($validated['date'])->year;
-            
-            $lateCount = Attendance::where('user_id', $validated['user_id'])
-                ->whereMonth('date', $month)
-                ->whereYear('date', $year)
-                ->where('status', 'late')
-                ->count();
-                
-            if ($lateCount > 0 && $lateCount % 3 === 0) {
-                // Deduct 1 leave balance
-                $leaveBalance = \App\Models\LeaveBalance::firstOrCreate(
-                    ['user_id' => $validated['user_id']],
-                    ['balance' => 0]
-                );
-                $leaveBalance->decrement('balance', 1);
-            }
-        }
-
-        return response()->json(['message' => 'Attendance marked manually', 'attendance' => $attendance]);
     }
 
-    public function checkIn(Request $request)
+    public function myAttendances(Request $request): JsonResponse
     {
-        $user = $request->user();
-        $date = Carbon::today()->toDateString();
-        $currentTime = Carbon::now()->format('H:i');
-        
-        $attendance = Attendance::where('user_id', $user->id)
-                                ->where('date', $date)
-                                ->first();
-
-        if ($attendance && $attendance->check_in) {
-            return response()->json(['message' => 'Already checked in for today', 'attendance' => $attendance], 400);
-        }
-
-        $threshold = Carbon::createFromFormat('H:i', '12:15');
-        $checkInTime = Carbon::now();
-        
-        $status = 'present';
-        if ($checkInTime->greaterThan($threshold)) {
-            $status = 'late';
-        }
-
-        $attendance = Attendance::updateOrCreate(
-            ['user_id' => $user->id, 'date' => $date],
-            [
-                'check_in' => $currentTime,
-                'status' => $status
-            ]
+        return $this->respondSuccess(
+            AttendanceResource::collection($this->attendanceService->myAttendances($request))
         );
-
-        // Deduct leave if 3 lates in the month
-        if ($status === 'late') {
-            $month = Carbon::parse($date)->month;
-            $year = Carbon::parse($date)->year;
-            
-            $lateCount = Attendance::where('user_id', $user->id)
-                ->whereMonth('date', $month)
-                ->whereYear('date', $year)
-                ->where('status', 'late')
-                ->count();
-                
-            if ($lateCount > 0 && $lateCount % 3 === 0) {
-                $leaveBalance = \App\Models\LeaveBalance::firstOrCreate(
-                    ['user_id' => $user->id],
-                    ['balance' => 0]
-                );
-                $leaveBalance->decrement('balance', 1);
-            }
-        }
-
-        return response()->json(['message' => 'Checked in successfully', 'attendance' => $attendance]);
     }
 
-    public function checkOut(Request $request)
+    public function markManualAttendance(ManualAttendanceRequest $request): JsonResponse
     {
-        $user = $request->user();
-        $date = Carbon::today()->toDateString();
-        $currentTime = Carbon::now()->format('H:i');
-        
-        $attendance = Attendance::where('user_id', $user->id)
-                                ->where('date', $date)
-                                ->first();
+        $attendance = $this->attendanceService->markManual($request->validated());
+        return $this->respondSuccess(
+            new AttendanceResource($attendance),
+            'Attendance marked manually'
+        );
+    }
 
-        if (!$attendance || !$attendance->check_in) {
-            return response()->json(['message' => 'Please check in first'], 400);
+    public function checkIn(Request $request): JsonResponse
+    {
+        try {
+            $attendance = $this->attendanceService->checkIn($request);
+            return $this->respondSuccess(
+                new AttendanceResource($attendance),
+                'Checked in successfully'
+            );
+        } catch (\RuntimeException $e) {
+            return $this->respondError($e->getMessage(), 400);
         }
+    }
 
-        $attendance->update([
-            'check_out' => $currentTime
-        ]);
-
-        return response()->json(['message' => 'Checked out successfully', 'attendance' => $attendance]);
+    public function checkOut(Request $request): JsonResponse
+    {
+        try {
+            $attendance = $this->attendanceService->checkOut($request);
+            return $this->respondSuccess(
+                new AttendanceResource($attendance),
+                'Checked out successfully'
+            );
+        } catch (\RuntimeException $e) {
+            return $this->respondError($e->getMessage(), 400);
+        }
     }
 }
