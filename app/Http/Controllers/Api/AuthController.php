@@ -3,44 +3,41 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\LoginRequest;
+use App\Http\Resources\UserResource;
+use App\Services\AuthService;
+use App\Traits\ApiResponse;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Hash;
-use App\Models\User;
 
 class AuthController extends Controller
 {
-    public function login(Request $request)
+    use ApiResponse;
+
+    public function __construct(
+        private readonly AuthService $authService
+    ) {}
+
+    public function login(LoginRequest $request): JsonResponse
     {
-        $request->validate([
-            'email' => 'required|email',
-            'password' => 'required',
-        ]);
-
-        $user = User::where('email', $request->email)->first();
-
-        if (! $user || ! Hash::check($request->password, $user->password)) {
-            return response()->json(['message' => 'Invalid credentials'], 401);
+        try {
+            $result = $this->authService->login($request->validated());
+            return $this->respondSuccess($result, 'Login successful');
+        } catch (\InvalidArgumentException $e) {
+            return $this->respondError($e->getMessage(), 401);
         }
-
-        $token = $user->createToken('auth_token')->plainTextToken;
-
-        return response()->json([
-            'access_token' => $token,
-            'token_type' => 'Bearer',
-            'user' => $user->load('roles')
-        ]);
     }
 
-    public function user(Request $request)
+    public function user(Request $request): JsonResponse
     {
-        return response()->json($request->user()->load('roles'));
+        return $this->respondSuccess(
+            new UserResource($this->authService->user($request))
+        );
     }
 
-    public function logout(Request $request)
+    public function logout(Request $request): JsonResponse
     {
-        $request->user()->currentAccessToken()->delete();
-
-        return response()->json(['message' => 'Logged out successfully']);
+        $this->authService->logout($request);
+        return $this->respondDeleted('Logged out successfully');
     }
 }
